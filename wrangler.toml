@@ -1,0 +1,8 @@
+name = "qxapibytanvir"
+main = "index.js"
+compatibility_date = "2026-10-28"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "quotex-db"
+database_id = "YOUR_D1_DATABASE_ID_HERE"
