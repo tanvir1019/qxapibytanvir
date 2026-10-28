@@ -1,7 +1,10 @@
-// Quotex data store on Cloudflare D1. Day-packed rows keep D1 writes low (free tier: 100k rows/day).
+// Quotex Cloudflare Worker (Standalone 24/7 Auto-Fetcher & D1 Storage)
 const KEEP_DAYS = 30;
 const API_KEY = "7c4e6b5db0f075f4b6c5104bb5d6e67e";
+const QUOTEX_BASE = "https://quotex.com"; // Quotex base endpoint
+const SESSION_TOKEN = "YOUR_QUOTEX_SESSION_OR_COOKIE_HERE"; // Tomar Quotex session token ekhane boshabe
 let ready = false;
+
 async function init(env) {
   if (ready) return;
   await env.DB.batch([
@@ -11,6 +14,7 @@ async function init(env) {
   ]);
   ready = true;
 }
+
 const J = (o, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "content-type": "application/json", "access-control-allow-origin": "*" } });
 const dayOf = (ts) => Math.floor(ts / 86400);
 const dayStr = (d) => new Date(d * 86400000).toISOString().slice(0, 10);
@@ -80,6 +84,7 @@ export default {
       if (req.method === "OPTIONS") return J({});
       await init(env);
       if (p === "/health") return J({ ok: true });
+      
       if (req.method === "POST") {
         if (req.headers.get("x-api-key") !== API_KEY) return J({ error: "unauthorized" }, 401);
         if (p === "/ingest") return J(await ingest(env, await req.json()));
@@ -88,12 +93,14 @@ export default {
           return J({ ok: true });
         }
       }
+
       if (p === "/api/v1/live/all" || p === "/api/v1/payout") {
         const r = await env.DB.prepare("SELECT data,ts FROM live WHERE k='all'").first();
         if (!r) return J({ error: "no live data yet" }, 404);
         const d = JSON.parse(r.data);
         return J({ ...(p === "/api/v1/payout" ? { payout: d.payout } : { live: d.live, payout: d.payout }), age_ms: Date.now() - r.ts, execution_time: (Date.now() - t0) / 1000 });
       }
+
       const pair = (q.get("pair") || "").toUpperCase(), days = Math.min(+q.get("days") || 1, KEEP_DAYS);
       if (p === "/api/v1/gaps") return J(await gaps(env, pair, days));
       if (p === "/api/v1/candles") {
@@ -107,8 +114,27 @@ export default {
       return J({ error: "not found" }, 404);
     } catch (e) { return J({ error: String(e) }, 500); }
   },
-  async scheduled(_, env) {
+
+  // Cloudflare Cron Trigger (24/7 background automatic fetcher & 30-day cleaner)
+  async scheduled(controller, env, ctx) {
+    await init(env);
+    
+    try {
+      const res = await fetch(`${QUOTEX_BASE}/api/v1/candles`, {
+        headers: { "Authorization": `Bearer ${SESSION_TOKEN}` }
+      });
+      const data = await res.json();
+      if (data) {
+        await ingest(env, data);
+      }
+    } catch (e) {
+      console.log("Auto-fetch error:", e);
+    }
+
     const old = dayOf(Date.now() / 1000) - KEEP_DAYS;
-    await env.DB.batch([env.DB.prepare("DELETE FROM candles_day WHERE day<?").bind(old), env.DB.prepare("DELETE FROM payouts_day WHERE day<?").bind(old)]);
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM candles_day WHERE day<?").bind(old), 
+      env.DB.prepare("DELETE FROM payouts_day WHERE day<?").bind(old)
+    ]);
   },
 };
