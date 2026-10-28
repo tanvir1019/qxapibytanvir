@@ -1,8 +1,9 @@
 name = "qxapibytanvir"
 main = "index.js"
-compatibility_date = "2026-10-28"
+compatibility_date = "2024-01-01"
 
-[[d1_databases]]
-binding = "DB"
-database_name = "quotex-db"
+[env.production]
 database_id = "6744b950-ff9b-46c2-8fc6-c980e3a47bb7"
+
+[triggers]
+crons = ["* * * * *"]
